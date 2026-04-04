@@ -15,9 +15,10 @@ use windows::Win32::{
         },
         WindowsAndMessaging::{
             BringWindowToTop, CallNextHookEx, EnumWindows, GetForegroundWindow, GetMessageW,
-            GetWindowThreadProcessId, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS,
-            LLKHF_INJECTED, MSG, SW_RESTORE, SetForegroundWindow, SetWindowsHookExW, ShowWindow,
-            UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            GetWindowThreadProcessId, HC_ACTION, HHOOK, IsIconic, KBDLLHOOKSTRUCT,
+            KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSG, SW_RESTORE, SW_SHOW, SetForegroundWindow,
+            SetWindowsHookExW, ShowWindow, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN,
+            WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
         },
     },
 };
@@ -48,7 +49,11 @@ fn main() {
 fn activate_or_run(exe: &str, path: Option<&str>) {
     if let Some(hwnd) = find_window_by_process(exe) {
         unsafe {
-            ShowWindow(hwnd, SW_RESTORE);
+            if IsIconic(hwnd).as_bool() {
+                ShowWindow(hwnd, SW_RESTORE);
+            } else {
+                ShowWindow(hwnd, SW_SHOW);
+            }
 
             let fg = GetForegroundWindow();
             if fg.0 != 0 {
