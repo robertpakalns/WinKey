@@ -69,16 +69,34 @@ fn activate_or_run(exe: &str, path: Option<&str>) {
             }
         }
     } else if let Some(path) = path {
-        let mut parts = path.split_whitespace();
-        let program = parts.next().unwrap();
+        let expanded = if path.contains("%USERPROFILE%") {
+            if let Ok(profile) = std::env::var("USERPROFILE") {
+                path.replace("%USERPROFILE%", &profile)
+            } else {
+                eprintln!("USERPROFILE environment variable not found");
+                return;
+            }
+        } else {
+            path.to_string()
+        };
+
+        let mut parts = expanded.split_whitespace();
+        let program = match parts.next() {
+            Some(p) => p,
+            None => {
+                eprintln!("Empty command line");
+                return;
+            }
+        };
         let args: Vec<&str> = parts.collect();
 
-        Command::new(program)
-            .args(args)
-            .spawn()
-            .expect("Failed to launch");
+        if let Err(e) = Command::new(program).args(args).spawn() {
+            eprintln!("Failed to launch Discord: {e}");
+        }
     } else {
-        Command::new(exe).spawn().expect("Failed to launch");
+        if let Err(e) = Command::new(exe).spawn() {
+            eprintln!("Failed to launch {exe}: {e}");
+        }
     }
 }
 
