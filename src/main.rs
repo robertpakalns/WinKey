@@ -18,11 +18,12 @@ use windows::Win32::{
             KEYEVENTF_KEYUP, SendInput, VK_CAPITAL,
         },
         WindowsAndMessaging::{
-            BringWindowToTop, CallNextHookEx, EnumWindows, GetForegroundWindow, GetMessageW,
-            GetWindowThreadProcessId, HC_ACTION, HHOOK, IsIconic, KBDLLHOOKSTRUCT,
-            KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSG, SW_RESTORE, SW_SHOW, SetForegroundWindow,
-            SetWindowsHookExW, ShowWindow, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN,
-            WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            BringWindowToTop, CallNextHookEx, EnumWindows, GWL_STYLE, GetForegroundWindow,
+            GetMessageW, GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId, HC_ACTION,
+            HHOOK, IsIconic, KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSG,
+            SW_RESTORE, SW_SHOW, SetForegroundWindow, SetWindowsHookExW, ShowWindow,
+            UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            WS_VISIBLE,
         },
     },
 };
@@ -79,22 +80,28 @@ fn activate_or_run(exe: &str, path: Option<&str>) {
 fn bring_to_foreground(hwnd: HWND) {
     unsafe {
         if IsIconic(hwnd).as_bool() {
-            ShowWindow(hwnd, SW_RESTORE);
-        } else {
-            ShowWindow(hwnd, SW_SHOW);
+            let _ = ShowWindow(hwnd, SW_RESTORE);
         }
 
+        let cur_tid = GetCurrentThreadId();
+        let target_tid = GetWindowThreadProcessId(hwnd, None);
         let fg = GetForegroundWindow();
-        if fg.0 != 0 {
-            let cur_tid = GetCurrentThreadId();
-            let fg_tid = GetWindowThreadProcessId(fg, None);
-            AttachThreadInput(cur_tid, fg_tid, true);
-            SetForegroundWindow(hwnd);
-            let _ = BringWindowToTop(hwnd);
-            AttachThreadInput(cur_tid, fg_tid, false);
+        let fg_tid = if fg.0 != 0 {
+            GetWindowThreadProcessId(fg, None)
         } else {
-            SetForegroundWindow(hwnd);
+            target_tid
+        };
+
+        if fg_tid != cur_tid {
+            AttachThreadInput(cur_tid, fg_tid, true);
         }
+        if target_tid != cur_tid && target_tid != fg_tid {
+            AttachThreadInput(cur_tid, target_tid, true);
+        }
+
+        let _ = SetForegroundWindow(hwnd);
+        let _ = BringWindowToTop(hwnd);
+        let _ = ShowWindow(hwnd, SW_SHOW);
     }
 }
 
@@ -130,19 +137,30 @@ fn expand_userprofile(path: &str) -> Option<String> {
     }
 }
 
-fn find_window_by_process(_target_exe: &str) -> Option<HWND> {
-    let mut result: Option<HWND> = None;
+fn find_window_by_process(target_exe: &str) -> Option<HWND> {
+    struct SearchState {
+        target_exe: String,
+        best: Option<HWND>,
+        fallback: Option<HWND>,
+    }
+
+    let mut state = SearchState {
+        target_exe: target_exe.to_string(),
+        best: None,
+        fallback: None,
+    };
 
     unsafe {
         let _ = EnumWindows(
             Some(enum_proc),
-            LPARAM(&mut result as *mut Option<HWND> as isize),
+            LPARAM(&mut state as *mut SearchState as isize),
         );
     }
 
-    return result;
+    return state.best.or(state.fallback);
 
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let state = unsafe { &mut *(lparam.0 as *mut SearchState) };
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
 
@@ -158,9 +176,19 @@ fn find_window_by_process(_target_exe: &str) -> Option<HWND> {
 
         if len > 0 {
             let name = String::from_utf16_lossy(&buffer[..len as usize]);
-            if name.eq_ignore_ascii_case("Discord.exe") {
-                unsafe { *(lparam.0 as *mut Option<HWND>) = Some(hwnd) };
-                return BOOL(0);
+            if name.eq_ignore_ascii_case(&state.target_exe) {
+                let has_title = unsafe { GetWindowTextLengthW(hwnd) } > 0;
+                let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32;
+                let has_visible_style = (style & WS_VISIBLE.0) != 0;
+
+                if has_title && has_visible_style {
+                    state.best = Some(hwnd);
+                    return BOOL(0);
+                } else if has_title {
+                    if state.fallback.is_none() {
+                        state.fallback = Some(hwnd);
+                    }
+                }
             }
         }
 
