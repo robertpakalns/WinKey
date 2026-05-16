@@ -1,10 +1,11 @@
 use std::{
     mem::size_of,
     process::Command,
+    ptr::null_mut,
     sync::{Mutex, OnceLock},
 };
 use windows::Win32::{
-    Foundation::{BOOL, CloseHandle, HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, WPARAM},
+    Foundation::{CloseHandle, HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, WPARAM},
     System::{
         ProcessStatus::K32GetModuleBaseNameW,
         Threading::{
@@ -27,6 +28,7 @@ use windows::Win32::{
         },
     },
 };
+use windows_core::BOOL;
 
 const DISCORD_EXE: &str = "Discord.exe";
 const DISCORD_PATH: &str =
@@ -52,15 +54,20 @@ fn main() {
     let _ = caps_state();
 
     let hook = unsafe {
-        SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), HINSTANCE(0), 0)
-            .expect("Failed to install hook")
+        SetWindowsHookExW(
+            WH_KEYBOARD_LL,
+            Some(keyboard_proc),
+            Some(HINSTANCE(null_mut())),
+            0,
+        )
+        .expect("Failed to install hook")
     };
 
     println!("Listening for Caps combos…");
 
     let mut msg = MSG::default();
 
-    while unsafe { GetMessageW(&mut msg, HWND(0), 0, 0) }.into() {}
+    while unsafe { GetMessageW(&mut msg, Some(HWND(null_mut())), 0, 0) }.into() {}
 
     let _ = unsafe { UnhookWindowsHookEx(hook) };
 }
@@ -86,17 +93,17 @@ fn bring_to_foreground(hwnd: HWND) {
         let cur_tid = GetCurrentThreadId();
         let target_tid = GetWindowThreadProcessId(hwnd, None);
         let fg = GetForegroundWindow();
-        let fg_tid = if fg.0 != 0 {
+        let fg_tid = if fg.0 != null_mut() {
             GetWindowThreadProcessId(fg, None)
         } else {
             target_tid
         };
 
         if fg_tid != cur_tid {
-            AttachThreadInput(cur_tid, fg_tid, true);
+            let _ = AttachThreadInput(cur_tid, fg_tid, true);
         }
         if target_tid != cur_tid && target_tid != fg_tid {
-            AttachThreadInput(cur_tid, target_tid, true);
+            let _ = AttachThreadInput(cur_tid, target_tid, true);
         }
 
         let _ = SetForegroundWindow(hwnd);
@@ -171,7 +178,7 @@ fn find_window_by_process(target_exe: &str) -> Option<HWND> {
             };
 
         let mut buffer = [0u16; 260];
-        let len = unsafe { K32GetModuleBaseNameW(handle, HMODULE(0), &mut buffer) };
+        let len = unsafe { K32GetModuleBaseNameW(handle, Some(HMODULE(null_mut())), &mut buffer) };
         let _ = unsafe { CloseHandle(handle) };
 
         if len > 0 {
@@ -228,13 +235,13 @@ fn make_caps_input(flags: KEYBD_EVENT_FLAGS) -> INPUT {
 
 unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     if n_code != HC_ACTION as i32 {
-        unsafe { return CallNextHookEx(HHOOK(0), n_code, w_param, l_param) };
+        unsafe { return CallNextHookEx(Some(HHOOK(null_mut())), n_code, w_param, l_param) };
     }
 
     let kb = unsafe { *(l_param.0 as *const KBDLLHOOKSTRUCT) };
 
     if (kb.flags & KBDLLHOOKSTRUCT_FLAGS(LLKHF_INJECTED.0 as u32)) != KBDLLHOOKSTRUCT_FLAGS(0) {
-        return unsafe { CallNextHookEx(HHOOK(0), n_code, w_param, l_param) };
+        return unsafe { CallNextHookEx(Some(HHOOK(null_mut())), n_code, w_param, l_param) };
     }
 
     let msg = w_param.0 as u32;
@@ -253,7 +260,7 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
             caps_state().lock().unwrap().used_as_modifier = true;
             LRESULT(1)
         }
-        _ => unsafe { CallNextHookEx(HHOOK(0), n_code, w_param, l_param) },
+        _ => unsafe { CallNextHookEx(Some(HHOOK(null_mut())), n_code, w_param, l_param) },
     }
 }
 
