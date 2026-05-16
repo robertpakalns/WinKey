@@ -1,7 +1,11 @@
 [package]
 name = "winkey"
 version = "0.1.0"
+authors = ["robertpakalns"]
 edition = "2024"
+description = "Improve Windows UX by opening apps with global keybinds"
+license-file = "LICENSE"
+repository = "https://github.com/robertpakalns/WinKey"
 
 [dependencies]
 windows = { version = "0.62.2", default-features = false, features = [
