@@ -21,18 +21,16 @@ use windows::Win32::{
         WindowsAndMessaging::{
             BringWindowToTop, CallNextHookEx, EnumWindows, GWL_STYLE, GetForegroundWindow,
             GetMessageW, GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId, HC_ACTION,
-            HHOOK, IsIconic, KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSG,
-            SW_RESTORE, SW_SHOW, SetForegroundWindow, SetWindowsHookExW, ShowWindow,
-            UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
-            WS_VISIBLE,
+            HHOOK, IsIconic, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, SW_RESTORE, SW_SHOW,
+            SetForegroundWindow, SetWindowsHookExW, ShowWindow, UnhookWindowsHookEx,
+            WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_VISIBLE,
         },
     },
 };
 use windows_core::BOOL;
 
 const DISCORD_EXE: &str = "Discord.exe";
-const DISCORD_PATH: &str =
-    r"%USERPROFILE%\AppData\Local\Discord\Update.exe --processStart Discord.exe";
+const DISCORD_PATH: &str = r"%LOCALAPPDATA%\Discord\Update.exe --processStart Discord.exe";
 const MY_EXTRA_INFO: usize = 0xDEADBEEF;
 
 const VK_D: u32 = 0x44;
@@ -113,7 +111,7 @@ fn bring_to_foreground(hwnd: HWND) {
 }
 
 fn launch_path(path: &str) {
-    let expanded = match expand_userprofile(path) {
+    let expanded = match expand_env_vars(path) {
         Some(s) => s,
         None => return,
     };
@@ -130,17 +128,47 @@ fn launch_path(path: &str) {
     }
 }
 
-fn expand_userprofile(path: &str) -> Option<String> {
-    if path.contains("%USERPROFILE%") {
-        match std::env::var("USERPROFILE") {
-            Ok(profile) => Some(path.replace("%USERPROFILE%", &profile)),
-            Err(_) => {
-                eprintln!("USERPROFILE environment variable not found");
-                None
+fn expand_env_vars(path: &str) -> Option<String> {
+    let mut result = String::new();
+    let remaining = path;
+    let mut last_end = 0;
+
+    while let Some(start) = remaining[last_end..].find('%') {
+        let start_pos = last_end + start;
+        if let Some(end) = remaining[start_pos + 1..].find('%') {
+            let end_pos = start_pos + 1 + end;
+            let var_name = &remaining[start_pos + 1..end_pos];
+
+            // Append the text before the variable
+            result.push_str(&remaining[last_end..start_pos]);
+
+            // Get the environment variable value
+            match std::env::var(var_name) {
+                Ok(value) => result.push_str(&value),
+                Err(_) => {
+                    eprintln!("Environment variable '%{}' not found", var_name);
+                    // Keep the original variable pattern if not found
+                    result.push_str(&remaining[start_pos..=end_pos]);
+                }
             }
+
+            last_end = end_pos + 1;
+        } else {
+            // No closing "%", treat the rest as literal
+            result.push_str(&remaining[last_end..]);
+            break;
         }
+    }
+
+    // Append any remaining text
+    if last_end < remaining.len() {
+        result.push_str(&remaining[last_end..]);
+    }
+
+    if result.is_empty() {
+        None
     } else {
-        Some(path.to_string())
+        Some(result)
     }
 }
 
@@ -240,7 +268,7 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
 
     let kb = unsafe { *(l_param.0 as *const KBDLLHOOKSTRUCT) };
 
-    if (kb.flags & KBDLLHOOKSTRUCT_FLAGS(LLKHF_INJECTED.0 as u32)) != KBDLLHOOKSTRUCT_FLAGS(0) {
+    if (kb.flags & LLKHF_INJECTED).0 != 0 && kb.dwExtraInfo != MY_EXTRA_INFO {
         return unsafe { CallNextHookEx(Some(HHOOK(null_mut())), n_code, w_param, l_param) };
     }
 
