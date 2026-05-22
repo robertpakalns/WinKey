@@ -28,8 +28,6 @@ struct Config {
 struct ParsedBinding {
     modifier: Modifier,
     vk: u32,
-    exe: String,
-    path: Option<String>,
 }
 
 pub fn load_config(path: &str) -> BindingMap {
@@ -55,12 +53,7 @@ fn parse_combo(combo: &str) -> Option<ParsedBinding> {
     let (modifier_str, key_str) = combo.split_once('+')?;
     let modifier = parse_modifier(modifier_str)?;
     let vk = ascii_char_to_vk(key_str.trim())?;
-    Some(ParsedBinding {
-        modifier,
-        vk,
-        exe: String::new(), // filled by caller
-        path: None,
-    })
+    Some(ParsedBinding { modifier, vk })
 }
 
 fn parse_modifier(s: &str) -> Option<Modifier> {
