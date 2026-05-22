@@ -54,7 +54,24 @@ fn bindings() -> &'static BindingMap {
 }
 
 fn main() {
-    let map = load_config("config.json");
+    let mut args = std::env::args_os();
+
+    args.next();
+    let config_path = match args.next() {
+        Some(arg) if arg == "--config" => args.next().unwrap_or_else(|| {
+            eprintln!("Missing config path after --config");
+            std::process::exit(1);
+        }),
+
+        _ => {
+            eprintln!("Usage: myhotkeys --config <config-path>");
+            std::process::exit(1);
+        }
+    };
+
+    let config_path = config_path.to_string_lossy();
+
+    let map = load_config(&config_path);
     println!("Loaded {} binding(s):", map.len());
     for ((modifier, vk), (exe, path)) in &map {
         let key_char = char::from_u32(*vk).unwrap_or('?');
