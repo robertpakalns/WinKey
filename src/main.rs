@@ -29,11 +29,11 @@ use windows::Win32::{
 };
 use windows_core::BOOL;
 
-const DISCORD_EXE: &str = "Discord.exe";
-const DISCORD_PATH: &str = r"%LOCALAPPDATA%\Discord\Update.exe --processStart Discord.exe";
-const MY_EXTRA_INFO: usize = 0xDEADBEEF;
+use crate::config::{BindingMap, Modifier, load_config};
 
-const VK_D: u32 = 0x44;
+mod config;
+
+const MY_EXTRA_INFO: usize = 0xDEADBEEF;
 
 #[derive(Default)]
 struct CapsState {
@@ -43,12 +43,28 @@ struct CapsState {
 }
 
 static CAPS_STATE: OnceLock<Mutex<CapsState>> = OnceLock::new();
+static BINDINGS: OnceLock<BindingMap> = OnceLock::new();
 
 fn caps_state() -> &'static Mutex<CapsState> {
     CAPS_STATE.get_or_init(|| Mutex::new(CapsState::default()))
 }
 
+fn bindings() -> &'static BindingMap {
+    BINDINGS.get().expect("BINDINGS not initialised")
+}
+
 fn main() {
+    let map = load_config("config.json");
+    println!("Loaded {} binding(s):", map.len());
+    for ((modifier, vk), (exe, path)) in &map {
+        let key_char = char::from_u32(*vk).unwrap_or('?');
+        match path {
+            Some(p) => println!("{modifier:?}+{key_char} -> {exe} ({p})"),
+            None => println!("{modifier:?}+{key_char} -> {exe}"),
+        }
+    }
+
+    BINDINGS.get_or_init(|| map);
     let _ = caps_state();
 
     let hook = unsafe {
@@ -58,16 +74,34 @@ fn main() {
             Some(HINSTANCE(null_mut())),
             0,
         )
-        .expect("Failed to install hook")
+        .expect("Failed to install keyboard hook")
     };
 
-    println!("Listening for Caps combos…");
+    println!("Listening for combos…");
 
     let mut msg = MSG::default();
 
     while unsafe { GetMessageW(&mut msg, Some(HWND(null_mut())), 0, 0) }.into() {}
 
     let _ = unsafe { UnhookWindowsHookEx(hook) };
+}
+
+fn handle_caps(is_down: bool, is_up: bool) {
+    let mut state = caps_state().lock().unwrap();
+    if is_down {
+        state.down = true;
+        state.used_as_modifier = false;
+        state.initial_state = get_caps_state();
+        return;
+    }
+    if is_up {
+        state.down = false;
+        let was_modifier = state.used_as_modifier;
+        drop(state);
+        if !was_modifier {
+            tap_caps();
+        }
+    }
 }
 
 fn activate_or_run(exe: &str, path: Option<&str>) {
@@ -276,39 +310,25 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
     let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
     let is_up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 
-    match kb.vkCode {
-        k if k == VK_CAPITAL.0 as u32 => {
+    // Caps Lock itself — only relevant when at least one Caps+X binding exists
+    if kb.vkCode == VK_CAPITAL.0 as u32 {
+        let has_caps_bindings = bindings().keys().any(|(m, _)| *m == Modifier::Caps);
+        if has_caps_bindings {
             handle_caps(is_down, is_up);
-            LRESULT(1)
+            return LRESULT(1);
         }
-        VK_D if caps_state().lock().unwrap().down => {
+    }
+
+    // Check active modifier states and look up the combo
+    if caps_state().lock().unwrap().down {
+        if let Some((exe, path)) = bindings().get(&(Modifier::Caps, kb.vkCode)) {
             if is_down {
-                activate_or_run(DISCORD_EXE, Some(DISCORD_PATH));
+                activate_or_run(exe, path.as_deref());
             }
             caps_state().lock().unwrap().used_as_modifier = true;
-            LRESULT(1)
-        }
-        _ => unsafe { CallNextHookEx(Some(HHOOK(null_mut())), n_code, w_param, l_param) },
-    }
-}
-
-fn handle_caps(is_down: bool, is_up: bool) {
-    let mut state = caps_state().lock().unwrap();
-
-    if is_down {
-        state.down = true;
-        state.used_as_modifier = false;
-        state.initial_state = get_caps_state();
-        return;
-    }
-
-    if is_up {
-        state.down = false;
-        let was_modifier = state.used_as_modifier;
-        drop(state);
-
-        if !was_modifier {
-            tap_caps();
+            return LRESULT(1);
         }
     }
+
+    unsafe { CallNextHookEx(Some(HHOOK(null_mut())), n_code, w_param, l_param) }
 }
