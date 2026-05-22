@@ -36,17 +36,17 @@ mod config;
 const MY_EXTRA_INFO: usize = 0xDEADBEEF;
 
 #[derive(Default)]
-struct CapsState {
+struct ModifierState {
     down: bool,
     used_as_modifier: bool,
     initial_state: bool,
 }
 
-static CAPS_STATE: OnceLock<Mutex<CapsState>> = OnceLock::new();
+static MODIFIER_STATE: OnceLock<Mutex<ModifierState>> = OnceLock::new();
 static BINDINGS: OnceLock<BindingMap> = OnceLock::new();
 
-fn caps_state() -> &'static Mutex<CapsState> {
-    CAPS_STATE.get_or_init(|| Mutex::new(CapsState::default()))
+fn modifier_state() -> &'static Mutex<ModifierState> {
+    MODIFIER_STATE.get_or_init(|| Mutex::new(ModifierState::default()))
 }
 
 fn bindings() -> &'static BindingMap {
@@ -65,7 +65,7 @@ fn main() {
     }
 
     BINDINGS.get_or_init(|| map);
-    let _ = caps_state();
+    let _ = modifier_state();
 
     let hook = unsafe {
         SetWindowsHookExW(
@@ -86,12 +86,12 @@ fn main() {
     let _ = unsafe { UnhookWindowsHookEx(hook) };
 }
 
-fn handle_caps(is_down: bool, is_up: bool) {
-    let mut state = caps_state().lock().unwrap();
+fn handle_modifier(is_down: bool, is_up: bool) {
+    let mut state = modifier_state().lock().unwrap();
     if is_down {
         state.down = true;
         state.used_as_modifier = false;
-        state.initial_state = get_caps_state();
+        state.initial_state = get_modifier_state();
         return;
     }
     if is_up {
@@ -265,7 +265,7 @@ fn find_window_by_process(target_exe: &str) -> Option<HWND> {
     }
 }
 
-fn get_caps_state() -> bool {
+fn get_modifier_state() -> bool {
     unsafe { (GetKeyState(VK_CAPITAL.0 as i32) & 1) != 0 }
 }
 
@@ -314,18 +314,18 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
     if kb.vkCode == VK_CAPITAL.0 as u32 {
         let has_caps_bindings = bindings().keys().any(|(m, _)| *m == Modifier::Caps);
         if has_caps_bindings {
-            handle_caps(is_down, is_up);
+            handle_modifier(is_down, is_up);
             return LRESULT(1);
         }
     }
 
     // Check active modifier states and look up the combo
-    if caps_state().lock().unwrap().down {
+    if modifier_state().lock().unwrap().down {
         if let Some((exe, path)) = bindings().get(&(Modifier::Caps, kb.vkCode)) {
             if is_down {
                 activate_or_run(exe, path.as_deref());
             }
-            caps_state().lock().unwrap().used_as_modifier = true;
+            modifier_state().lock().unwrap().used_as_modifier = true;
             return LRESULT(1);
         }
     }
