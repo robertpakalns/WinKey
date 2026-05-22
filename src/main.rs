@@ -209,14 +209,12 @@ fn expand_env_vars(path: &str) -> Option<String> {
 fn find_window_by_process(target_exe: &str) -> Option<HWND> {
     struct SearchState {
         target_exe: String,
-        best: Option<HWND>,
-        fallback: Option<HWND>,
+        found: Option<HWND>,
     }
 
     let mut state = SearchState {
         target_exe: target_exe.to_string(),
-        best: None,
-        fallback: None,
+        found: None,
     };
 
     unsafe {
@@ -226,7 +224,7 @@ fn find_window_by_process(target_exe: &str) -> Option<HWND> {
         );
     }
 
-    return state.best.or(state.fallback);
+    return state.found;
 
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let state = unsafe { &mut *(lparam.0 as *mut SearchState) };
@@ -242,23 +240,25 @@ fn find_window_by_process(target_exe: &str) -> Option<HWND> {
         let mut buffer = [0u16; 260];
         let len = unsafe { K32GetModuleBaseNameW(handle, Some(HMODULE(null_mut())), &mut buffer) };
         let _ = unsafe { CloseHandle(handle) };
+        if len == 0 {
+            return BOOL(1);
+        }
 
-        if len > 0 {
-            let name = String::from_utf16_lossy(&buffer[..len as usize]);
-            if name.eq_ignore_ascii_case(&state.target_exe) {
-                let has_title = unsafe { GetWindowTextLengthW(hwnd) } > 0;
-                let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32;
-                let has_visible_style = (style & WS_VISIBLE.0) != 0;
+        let name = String::from_utf16_lossy(&buffer[..len as usize]);
+        if !name.eq_ignore_ascii_case(&state.target_exe) {
+            return BOOL(1);
+        }
 
-                if has_title && has_visible_style {
-                    state.best = Some(hwnd);
-                    return BOOL(0);
-                } else if has_title {
-                    if state.fallback.is_none() {
-                        state.fallback = Some(hwnd);
-                    }
-                }
-            }
+        let has_title = unsafe { GetWindowTextLengthW(hwnd) } > 0;
+        let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32;
+        let is_visible = (style & WS_VISIBLE.0) != 0;
+        let is_minimized = unsafe { IsIconic(hwnd) }.as_bool();
+
+        // Accept visible windows with a title, or minimized windows with a title
+        // Reject everything else (tray icons, background helper windows, etc.)
+        if has_title && (is_visible || is_minimized) {
+            state.found = Some(hwnd);
+            return BOOL(0);
         }
 
         BOOL(1)
