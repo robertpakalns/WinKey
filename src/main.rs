@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use std::{
     mem::size_of,
     process::Command,
@@ -73,7 +75,7 @@ fn main() {
 
     let map = load_config(&config_path);
     println!("Loaded {} binding(s):", map.len());
-    for ((modifier, vk), (exe, path)) in &map {
+    for ((modifier, vk), (exe, path, _args)) in &map {
         let key_char = char::from_u32(*vk).unwrap_or('?');
         match path {
             Some(p) => println!("{modifier:?}+{key_char} -> {exe} ({p})"),
@@ -121,11 +123,12 @@ fn handle_modifier(is_down: bool, is_up: bool) {
     }
 }
 
-fn activate_or_run(exe: &str, path: Option<&str>) {
+fn activate_or_run(exe: &str, path: Option<&String>, args: Option<&Vec<String>>) {
     if let Some(hwnd) = find_window_by_process(exe) {
         bring_to_foreground(hwnd);
     } else if let Some(path) = path {
-        launch_path(path);
+        let args = args.map(|v| v.as_slice()).unwrap_or(&[]);
+        launch_path(path, args);
     } else {
         if let Err(e) = Command::new(exe).spawn() {
             eprintln!("Failed to launch {exe}: {e}");
@@ -161,21 +164,17 @@ fn bring_to_foreground(hwnd: HWND) {
     }
 }
 
-fn launch_path(path: &str) {
+fn launch_path(path: &str, args: &[String]) {
     let expanded = match expand_env_vars(path) {
         Some(s) => s,
         None => return,
     };
 
-    let mut parts = expanded.split_whitespace();
-    let Some(program) = parts.next() else {
-        eprintln!("Empty command line");
-        return;
-    };
+    let mut cmd = Command::new(expanded);
+    cmd.args(args);
 
-    let args: Vec<&str> = parts.collect();
-    if let Err(e) = Command::new(program).args(&args).spawn() {
-        eprintln!("Failed to launch '{program}': {e}");
+    if let Err(e) = cmd.spawn() {
+        eprintln!("Failed to launch: {e}");
     }
 }
 
@@ -338,9 +337,9 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
 
     // Check active modifier states and look up the combo
     if modifier_state().lock().unwrap().down {
-        if let Some((exe, path)) = bindings().get(&(Modifier::Caps, kb.vkCode)) {
+        if let Some((exe, path, args)) = bindings().get(&(Modifier::Caps, kb.vkCode)) {
             if is_down {
-                activate_or_run(exe, path.as_deref());
+                activate_or_run(exe, path.as_ref(), args.as_ref());
             }
             modifier_state().lock().unwrap().used_as_modifier = true;
             return LRESULT(1);

@@ -9,10 +9,12 @@ struct Binding {
     exe: String,
     /// Optional launch path (supports %ENV_VARS%). If null, `exe` is used directly.
     path: Option<String>,
+    /// Optional arguments
+    args: Option<Vec<String>>,
 }
 
 /// Key: (modifier, vk)
-pub type BindingMap = HashMap<(Modifier, u32), (String, Option<String>)>;
+pub type BindingMap = HashMap<(Modifier, u32), (String, Option<String>, Option<Vec<String>>)>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Modifier {
@@ -44,7 +46,10 @@ pub fn load_config(path: &str) -> BindingMap {
                 binding.combo
             )
         });
-        map.insert((parsed.modifier, parsed.vk), (binding.exe, binding.path));
+        map.insert(
+            (parsed.modifier, parsed.vk),
+            (binding.exe, binding.path, binding.args),
+        );
     }
     map
 }
